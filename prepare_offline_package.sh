@@ -18,12 +18,15 @@ git clone https://github.com/CISOfy/lynis.git "$TOOLS_DIR/lynis"
 curl -L -o "$TOOLS_DIR/linpeas.sh" https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh
 chmod +x "$TOOLS_DIR/linpeas.sh"
 
-# OpenSCAP profile (ajustar según tu sistema)
+# OpenSCAP Profile (ajustar si usas otra distro)
 curl -L -o "$TOOLS_DIR/ssg-ubuntu2204-ds.xml" https://github.com/ComplianceAsCode/content/releases/latest/download/ssg-ubuntu2204-ds.xml
 
-echo "[*] Descargando binarios necesarios y dependencias..."
+# Clair Scanner (versión estática)
+curl -L -o "$TOOLS_DIR/clair-scanner" https://github.com/arminc/clair-scanner/releases/latest/download/clair-scanner_linux_amd64
+chmod +x "$TOOLS_DIR/clair-scanner"
 
-# Lista de paquetes
+echo "[*] Descargando paquetes .deb y dependencias..."
+
 PACKAGES=(
   chkrootkit
   rkhunter
@@ -37,43 +40,43 @@ PACKAGES=(
   trivy
 )
 
-# Descargar .deb + dependencias (Ubuntu/Debian)
 for pkg in "${PACKAGES[@]}"; do
-  echo "[+] Descargando $pkg y sus dependencias..."
-  apt download "$pkg" -y -o=dir::cache="$PKG_DIR" 2>/dev/null || echo "   [!] Falló $pkg (puede que no exista en este sistema)"
+  echo "[+] Descargando $pkg..."
+  apt download "$pkg" -o=dir::cache="$PKG_DIR" 2>/dev/null || echo "   [!] Falló $pkg (puede que no esté disponible)"
 done
 
-# Clair-scanner binario (ejemplo sencillo)
-curl -L -o "$TOOLS_DIR/clair-scanner" https://github.com/arminc/clair-scanner/releases/latest/download/clair-scanner_linux_amd64
-chmod +x "$TOOLS_DIR/clair-scanner"
+echo "[*] Copiando ejecutables del sistema si están instalados..."
 
-echo "[*] Copiando ejecutables estáticos si existen..."
-
-# Buscar binarios instalados y copiarlos al directorio /bin
 for cmd in osqueryi trivy aide debsecan rkhunter chkrootkit tiger lynx bastille ausearch; do
   if command -v "$cmd" &> /dev/null; then
     cp "$(command -v $cmd)" "$BIN_DIR/" || echo "   [!] No se pudo copiar $cmd"
   fi
 done
 
-echo "[*] Copia de binarios completa."
+echo "[*] Guardando scripts de instalación y ejecución..."
 
-# Guardar scripts de instalación y ejecución
+# install.sh
 cat > "$OFFLINE_DIR/install.sh" << 'EOF'
 #!/bin/bash
 set -e
 echo "[*] Instalando paquetes locales..."
 sudo dpkg -i packages/*.deb 2>/dev/null || true
-echo "[*] Herramientas listas. Puedes ejecutarlas con run_all.sh"
+echo "[*] Instalación completa. Ejecuta ./run_all.sh para iniciar la auditoría."
 EOF
-
 chmod +x "$OFFLINE_DIR/install.sh"
 
+# run_all.sh
 cat > "$OFFLINE_DIR/run_all.sh" << 'EOF'
 #!/bin/bash
 
+set -e
 OUTPUT_DIR="./output"
+HTML_REPORT="$OUTPUT_DIR/report.html"
 mkdir -p "$OUTPUT_DIR"
+
+GREEN="\033[0;32m"
+RED="\033[0;31m"
+NC="\033[0m"
 
 declare -A TOOLS=(
   [Lynis]="tools/lynis/lynis audit system --quick --quiet --logfile \$OUTPUT_DIR/lynis.log"
@@ -92,17 +95,34 @@ declare -A TOOLS=(
   [Bastille]="bin/bastille -c > \$OUTPUT_DIR/bastille.log"
 )
 
+echo "<html><head><title>Informe de Seguridad</title><style>
+body { font-family: Arial; background-color: #f4f4f4; padding: 20px; }
+h2 { background-color: #003366; color: white; padding: 10px; }
+pre { background-color: #ffffff; padding: 10px; border-left: 5px solid #003366; overflow-x: auto; }
+</style></head><body><h1>Informe de Seguridad</h1>" > "$HTML_REPORT"
+
 for tool in "${!TOOLS[@]}"; do
-  echo "[*] Ejecutando $tool..."
-  eval "${TOOLS[$tool]}"
+  echo -e "[*] Ejecutando ${GREEN}$tool${NC}..."
+  eval "${TOOLS[$tool]}" || echo -e "${RED}[!] Error al ejecutar $tool${NC}"
+  
+  FILE=$(echo "${TOOLS[$tool]}" | grep -oE '> \$OUTPUT_DIR/[^ ]+' | awk -F '/' '{print $NF}')
+  FILE_PATH="$OUTPUT_DIR/${FILE}"
+
+  if [[ -f "$FILE_PATH" ]]; then
+    echo "<h2>$tool</h2><pre>" >> "$HTML_REPORT"
+    head -n 100 "$FILE_PATH" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> "$HTML_REPORT"
+    echo "</pre>" >> "$HTML_REPORT"
+  fi
 done
 
-echo "[*] Auditoría completa. Resultados en \$OUTPUT_DIR"
-EOF
+echo "<p><strong>Informe generado el:</strong> $(date)</p></body></html>" >> "$HTML_REPORT"
 
+echo -e "\n${GREEN}[✔] Auditoría completa. Resultados guardados en '$OUTPUT_DIR'.${NC}"
+echo -e "${GREEN}[✔] Reporte HTML generado: '$HTML_REPORT'${NC}"
+EOF
 chmod +x "$OFFLINE_DIR/run_all.sh"
 
-echo "[*] Empaquetando todo para transferencia..."
-tar -czvf offline_security_tools.tar.gz "$OFFLINE_DIR"
+echo "[*] Empaquetando para transferencia..."
+tar -czf offline_security_tools.tar.gz "$OFFLINE_DIR"
 
-echo "[✔] Paquete creado: offline_security_tools.tar.gz"
+echo "[✔] Paquete offline preparado: offline_security_tools.tar.gz"
