@@ -1,192 +1,154 @@
 #!/bin/bash
 
 set -e
-OFFLINE_DIR="offline_security_tools"
-BIN_DIR="$OFFLINE_DIR/bin"
-TOOLS_DIR="$OFFLINE_DIR/tools"
-PKG_DIR="$OFFLINE_DIR/packages"
 
-echo "[*] Creando estructura de directorios..."
-mkdir -p "$BIN_DIR" "$TOOLS_DIR" "$PKG_DIR"
+BASE_DIR="$(pwd)"
+BIN_DIR="$BASE_DIR/bin"
+OUTPUT_DIR="$BASE_DIR/output"
+PACKAGE_NAME="offline_security_tools"
+TAR_FILE="$PACKAGE_NAME.tar.gz"
 
-echo "[*] Descargando herramientas portables y scripts..."
+mkdir -p "$BIN_DIR" "$OUTPUT_DIR"
+
+echo "[*] Descargando herramientas..."
+
+# Tiger (requiere instalación desde .deb)
+echo " - Descargando tiger..."
+apt download tiger -y >/dev/null 2>&1 || echo "Tiger no pudo descargarse, revisa repositorios habilitados."
+mv tiger_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ Tiger .deb no encontrado tras descarga."
+
+# RKHunter
+echo " - Descargando rkhunter..."
+apt download rkhunter -y >/dev/null 2>&1 || echo "RKHunter no pudo descargarse."
+mv rkhunter_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ RKHunter .deb no encontrado tras descarga."
+
+# AIDE
+echo " - Descargando AIDE..."
+apt download aide aide-common -y >/dev/null 2>&1 || echo "AIDE no pudo descargarse."
+mv aide*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ AIDE .deb no encontrado tras descarga."
+
+# Nmap
+echo " - Descargando nmap..."
+apt download nmap -y >/dev/null 2>&1 || echo "Nmap no pudo descargarse."
+mv nmap_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ Nmap .deb no encontrado tras descarga."
+
+# Lynx
+echo " - Descargando lynx..."
+apt download lynx -y >/dev/null 2>&1 || echo "Lynx no pudo descargarse."
+mv lynx_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ Lynx .deb no encontrado tras descarga."
+
+# Trivy (directo desde GitHub)
+echo " - Descargando Trivy..."
+TRIVY_URL=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | grep browser_download_url | grep 'trivy_.*Linux-64bit.tar.gz' | cut -d '"' -f 4)
+wget -q "$TRIVY_URL" -O trivy.tar.gz
+tar -xzf trivy.tar.gz
+mv trivy "$BIN_DIR/"
+rm -rf trivy.tar.gz LICENSE README.md
 
 # Lynis
-git clone https://github.com/CISOfy/lynis.git "$TOOLS_DIR/lynis"
+echo " - Descargando Lynis..."
+wget -q https://downloads.cisofy.com/lynis/lynis-3.0.9.tar.gz -O lynis.tar.gz
+tar -xzf lynis.tar.gz
+mv lynis "$BIN_DIR/"
+rm lynis.tar.gz
 
-# LinPEAS
-curl -L -o "$TOOLS_DIR/linpeas.sh" https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh
-chmod +x "$TOOLS_DIR/linpeas.sh"
+# OpenSCAP
+echo " - Descargando oscap scanner..."
+apt download libopenscap8 -y >/dev/null 2>&1 || echo "OpenSCAP no pudo descargarse."
+mv libopenscap*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ OpenSCAP .deb no encontrado tras descarga."
 
-# OpenSCAP profile (ajustar según tu sistema)
-curl -L -o "$TOOLS_DIR/ssg-ubuntu2204-ds.xml" https://github.com/ComplianceAsCode/content/releases/latest/download/ssg-ubuntu2204-ds.xml
-
-echo "[*] Descargando binarios necesarios y dependencias..."
-
-# Lista de paquetes
-PACKAGES=(
-  chkrootkit
-  rkhunter
-  debsecan
-  osquery
-  aide
-  tiger
-  auditd
-  trivy
-)
-
-# Descargar .deb + dependencias (Ubuntu/Debian)
-for pkg in "${PACKAGES[@]}"; do
-  echo "[+] Descargando $pkg y sus dependencias..."
-  apt download "$pkg" -y -o=dir::cache="$PKG_DIR" 2>/dev/null || echo "   [!] Falló $pkg (puede que no exista en este sistema)"
-done
-
-# Clair-scanner binario (ejemplo sencillo)
-curl -L -o "$TOOLS_DIR/clair-scanner" https://github.com/arminc/clair-scanner/releases/latest/download/clair-scanner_linux_amd64
-chmod +x "$TOOLS_DIR/clair-scanner"
-
-# Copiar binarios instalados al directorio bin
-for cmd in osqueryi trivy aide debsecan rkhunter chkrootkit tiger lynx bastille ausearch; do
-  if command -v "$cmd" &> /dev/null; then
-    cp "$(command -v $cmd)" "$BIN_DIR/" || echo "   [!] No se pudo copiar $cmd"
-  fi
-done
-
-# Copiar configuración de AIDE
-if [[ -f /etc/aide/aide.conf ]]; then
-  echo "[*] Copiando configuración de AIDE..."
-  cp /etc/aide/aide.conf "$TOOLS_DIR/aide.conf"
-else
-  echo "[!] No se encontró /etc/aide/aide.conf"
-fi
-
-# Guardar script de instalación
-cat > "$OFFLINE_DIR/install.sh" << 'EOF'
+# Scripts personalizados
+echo " - Copiando scripts de ejecución..."
+cat > "$BASE_DIR/run_all.sh" << 'EOF'
 #!/bin/bash
-set -e
-echo "[*] Instalando paquetes locales..."
-sudo dpkg -i packages/*.deb 2>/dev/null || true
-echo "[*] Herramientas listas. Puedes ejecutarlas con run_all.sh"
-EOF
-
-chmod +x "$OFFLINE_DIR/install.sh"
-
-# Guardar script de ejecución
-cat > "$OFFLINE_DIR/run_all.sh" << 'EOF'
-#!/bin/bash
-
 set -e
 OUTPUT_DIR="./output"
 mkdir -p "$OUTPUT_DIR"
 
-declare -A TOOLS=(
-  [Lynis]="tools/lynis/lynis audit system --quick --quiet --logfile \$OUTPUT_DIR/lynis.log"
-  [Chkrootkit]="bin/chkrootkit > \$OUTPUT_DIR/chkrootkit.log"
-  [RKHunter]="bin/rkhunter --check --skip-keypress > \$OUTPUT_DIR/rkhunter.log"
-  [Debsecan]="bin/debsecan > \$OUTPUT_DIR/debsecan.log"
-  [Osquery]="bin/osqueryi --json 'SELECT name,path,pid,uid FROM processes LIMIT 10;' > \$OUTPUT_DIR/osquery.json"
-  [AIDE]="bin/aide --check --config tools/aide.conf > \$OUTPUT_DIR/aide.log"
-  [LinPEAS]="tools/linpeas.sh -a > \$OUTPUT_DIR/linpeas.log"
-  [Tiger]="bin/tiger -H > \$OUTPUT_DIR/tiger.log"
-  [OpenSCAP]="oscap xccdf eval --report \$OUTPUT_DIR/openscap.html --profile xccdf_org.ssgproject.content_profile_standard --results-arf \$OUTPUT_DIR/arf.xml tools/ssg-ubuntu2204-ds.xml"
-  [Trivy]="bin/trivy fs / --format json > \$OUTPUT_DIR/trivy.json"
-  [Auditd]="bin/ausearch -x /usr/bin/sudo > \$OUTPUT_DIR/auditd.log"
-  [Bastille]="bin/bastille -c > \$OUTPUT_DIR/bastille.log"
-)
+echo "[*] Ejecutando Tiger..."
+dpkg -x bin/tiger_*.deb ./tmp && ./tmp/usr/sbin/tiger > "$OUTPUT_DIR/tiger.log" 2>&1 || echo "⚠️ Tiger falló."
 
-for tool in "${!TOOLS[@]}"; do
-  echo -e "\n\e[1;36m[*] Ejecutando $tool...\e[0m"
-  eval "${TOOLS[$tool]}"
-done
+echo "[*] Ejecutando RKHunter..."
+dpkg -x bin/rkhunter_*.deb ./tmp && ./tmp/usr/bin/rkhunter --check --sk --nocolors > "$OUTPUT_DIR/rkhunter.log" 2>&1 || echo "⚠️ RKHunter falló."
 
-echo -e "\n\e[1;32m[✔] Auditoría completa. Resultados en \$OUTPUT_DIR\e[0m"
+echo "[*] Ejecutando AIDE..."
+dpkg -x bin/aide_*.deb ./tmp
+dpkg -x bin/aide-common_*.deb ./tmp
+./tmp/usr/bin/aide --init > "$OUTPUT_DIR/aide.log" 2>&1 || echo "⚠️ AIDE falló."
+
+echo "[*] Ejecutando Lynis..."
+./bin/lynis/lynis audit system > "$OUTPUT_DIR/lynis.txt" 2>&1 || echo "⚠️ Lynis falló."
+
+echo "[*] Ejecutando Nmap..."
+./bin/nmap -sV -oN "$OUTPUT_DIR/nmap.log" 127.0.0.1 || echo "⚠️ Nmap falló."
+
+echo "[*] Ejecutando Lynx..."
+./bin/lynx -dump https://example.com > "$OUTPUT_DIR/lynx.txt" || echo "⚠️ Lynx falló."
+
+echo "[*] Ejecutando Trivy..."
+./bin/trivy fs --quiet --severity HIGH,CRITICAL --output "$OUTPUT_DIR/trivy.txt" ./ || echo "⚠️ Trivy falló."
+
+echo "[*] Ejecutando OpenSCAP..."
+dpkg -x bin/libopenscap*.deb ./tmp
+./tmp/usr/bin/oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_standard --results "$OUTPUT_DIR/openscap-results.xml" /usr/share/openscap/scap-yast2sec-xccdf.xml || echo "⚠️ OpenSCAP falló."
+
+echo "[✔] Todas las herramientas ejecutadas."
 EOF
 
-chmod +x "$OFFLINE_DIR/run_all.sh"
+chmod +x "$BASE_DIR/run_all.sh"
 
-# Crear HTML bonito (opcional, puedes integrarlo luego)
-cat > "$OFFLINE_DIR/generate_report.sh" << 'EOF'
+# Report generator
+cat > "$BASE_DIR/generate_report.sh" << 'EOF'
 #!/bin/bash
-
 OUTPUT_DIR="./output"
 REPORT="$OUTPUT_DIR/report.html"
+mkdir -p "$OUTPUT_DIR"
 
 echo "[*] Generando informe HTML completo..."
 
-# Cabecera HTML con estilo
-cat << 'EOF' > "$REPORT"
+cat << 'HTML' > "$REPORT"
 <!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Informe de Auditoría de Seguridad</title>
+  <title>Informe de Auditoría</title>
   <style>
-    body { font-family: sans-serif; background: #f9f9f9; color: #333; padding: 20px; }
+    body { font-family: Arial; padding: 20px; background: #f0f0f0; }
     h1 { color: #005b96; }
-    h2 { color: #003f5c; }
-    pre { background: #f0f0f0; padding: 10px; border-left: 4px solid #005b96; overflow-x: auto; }
-    .section { margin-bottom: 30px; }
-    summary { font-weight: bold; cursor: pointer; color: #003f5c; }
-    .index a { text-decoration: none; color: #0077cc; }
-    .index li { margin-bottom: 5px; }
-    .footer { margin-top: 40px; font-size: 0.9em; color: #777; }
+    summary { font-weight: bold; cursor: pointer; margin-top: 10px; }
+    pre { background: #fff; padding: 10px; border: 1px solid #ccc; overflow-x: auto; }
   </style>
 </head>
 <body>
-  <h1>🛡️ Informe de Auditoría de Seguridad</h1>
-  <p>Este informe resume la salida de todas las herramientas ejecutadas.</p>
+  <h1>🛡 Informe de Auditoría de Seguridad</h1>
+  <ul>
+HTML
 
-  <h2>📋 Índice de herramientas</h2>
-  <ul class="index">
-EOF
-
-# Índice dinámico
 for file in "$OUTPUT_DIR"/*; do
-  [ -f "$file" ] || continue
   name=$(basename "$file")
-  anchor_id=$(echo "$name" | sed 's/[^a-zA-Z0-9]/_/g')
-  echo "    <li><a href=\"#$anchor_id\">$name</a></li>" >> "$REPORT"
+  id=$(echo "$name" | tr -c '[:alnum:]' '_')
+  echo "<li><a href=\"#$id\">$name</a></li>" >> "$REPORT"
 done
 
-# Inicio del cuerpo
-echo "  </ul><hr>" >> "$REPORT"
+echo "</ul><hr>" >> "$REPORT"
 
-# Cuerpo con secciones por archivo
 for file in "$OUTPUT_DIR"/*; do
-  [ -f "$file" ] || continue
   name=$(basename "$file")
-  anchor_id=$(echo "$name" | sed 's/[^a-zA-Z0-9]/_/g')
-
-  echo "<div class=\"section\" id=\"$anchor_id\">" >> "$REPORT"
-  echo "<details open><summary>📄 $name</summary><br>" >> "$REPORT"
-
-  # Detecta si es HTML y lo embebe
-  if [[ "$file" == *.html ]]; then
-    echo "<iframe src=\"$name\" width=\"100%\" height=\"600px\" style=\"border:1px solid #ccc;\"></iframe>" >> "$REPORT"
-  else
-    echo "<pre>" >> "$REPORT"
-    cat "$file" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> "$REPORT"
-    echo "</pre>" >> "$REPORT"
-  fi
-
-  echo "</details></div>" >> "$REPORT"
+  id=$(echo "$name" | tr -c '[:alnum:]' '_')
+  echo "<details id=\"$id\"><summary>$name</summary><pre>" >> "$REPORT"
+  cat "$file" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> "$REPORT"
+  echo "</pre></details>" >> "$REPORT"
 done
 
-# Pie de página
-cat << 'EOF' >> "$REPORT"
-  <div class="footer">
-    Generado automáticamente el <strong>$(date)</strong>.
-  </div>
-</body>
-</html>
+echo "</body></html>" >> "$REPORT"
+
+echo "[✔] Informe generado: $REPORT"
 EOF
 
-echo "[✔] Informe generado en $REPORT"
+chmod +x "$BASE_DIR/generate_report.sh"
 
-chmod +x "$OFFLINE_DIR/generate_report.sh"
+# Crear archivo tar final
+echo "[*] Empaquetando..."
+tar -czf "$TAR_FILE" bin run_all.sh generate_report.sh output/
 
-# Crear el paquete final
-echo "[*] Empaquetando todo..."
-tar -czvf offline_security_tools.tar.gz "$OFFLINE_DIR"
-
-echo -e "\n\e[1;32m[✔] Paquete creado: offline_security_tools.tar.gz\e[0m"
+echo "[✔] Paquete creado: $TAR_FILE"
