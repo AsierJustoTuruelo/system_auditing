@@ -18,15 +18,12 @@ git clone https://github.com/CISOfy/lynis.git "$TOOLS_DIR/lynis"
 curl -L -o "$TOOLS_DIR/linpeas.sh" https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh
 chmod +x "$TOOLS_DIR/linpeas.sh"
 
-# OpenSCAP Profile (ajustar si usas otra distro)
+# OpenSCAP profile (ajustar según tu sistema)
 curl -L -o "$TOOLS_DIR/ssg-ubuntu2204-ds.xml" https://github.com/ComplianceAsCode/content/releases/latest/download/ssg-ubuntu2204-ds.xml
 
-# Clair Scanner (versión estática)
-curl -L -o "$TOOLS_DIR/clair-scanner" https://github.com/arminc/clair-scanner/releases/latest/download/clair-scanner_linux_amd64
-chmod +x "$TOOLS_DIR/clair-scanner"
+echo "[*] Descargando binarios necesarios y dependencias..."
 
-echo "[*] Descargando paquetes .deb y dependencias..."
-
+# Lista de paquetes
 PACKAGES=(
   chkrootkit
   rkhunter
@@ -34,49 +31,53 @@ PACKAGES=(
   osquery
   aide
   tiger
-  lynx
   auditd
-  bastille
   trivy
 )
 
+# Descargar .deb + dependencias (Ubuntu/Debian)
 for pkg in "${PACKAGES[@]}"; do
-  echo "[+] Descargando $pkg..."
-  apt download "$pkg" -o=dir::cache="$PKG_DIR" 2>/dev/null || echo "   [!] Falló $pkg (puede que no esté disponible)"
+  echo "[+] Descargando $pkg y sus dependencias..."
+  apt download "$pkg" -y -o=dir::cache="$PKG_DIR" 2>/dev/null || echo "   [!] Falló $pkg (puede que no exista en este sistema)"
 done
 
-echo "[*] Copiando ejecutables del sistema si están instalados..."
+# Clair-scanner binario (ejemplo sencillo)
+curl -L -o "$TOOLS_DIR/clair-scanner" https://github.com/arminc/clair-scanner/releases/latest/download/clair-scanner_linux_amd64
+chmod +x "$TOOLS_DIR/clair-scanner"
 
+# Copiar binarios instalados al directorio bin
 for cmd in osqueryi trivy aide debsecan rkhunter chkrootkit tiger lynx bastille ausearch; do
   if command -v "$cmd" &> /dev/null; then
     cp "$(command -v $cmd)" "$BIN_DIR/" || echo "   [!] No se pudo copiar $cmd"
   fi
 done
 
-echo "[*] Guardando scripts de instalación y ejecución..."
+# Copiar configuración de AIDE
+if [[ -f /etc/aide/aide.conf ]]; then
+  echo "[*] Copiando configuración de AIDE..."
+  cp /etc/aide/aide.conf "$TOOLS_DIR/aide.conf"
+else
+  echo "[!] No se encontró /etc/aide/aide.conf"
+fi
 
-# install.sh
+# Guardar script de instalación
 cat > "$OFFLINE_DIR/install.sh" << 'EOF'
 #!/bin/bash
 set -e
 echo "[*] Instalando paquetes locales..."
 sudo dpkg -i packages/*.deb 2>/dev/null || true
-echo "[*] Instalación completa. Ejecuta ./run_all.sh para iniciar la auditoría."
+echo "[*] Herramientas listas. Puedes ejecutarlas con run_all.sh"
 EOF
+
 chmod +x "$OFFLINE_DIR/install.sh"
 
-# run_all.sh
+# Guardar script de ejecución
 cat > "$OFFLINE_DIR/run_all.sh" << 'EOF'
 #!/bin/bash
 
 set -e
 OUTPUT_DIR="./output"
-HTML_REPORT="$OUTPUT_DIR/report.html"
 mkdir -p "$OUTPUT_DIR"
-
-GREEN="\033[0;32m"
-RED="\033[0;31m"
-NC="\033[0m"
 
 declare -A TOOLS=(
   [Lynis]="tools/lynis/lynis audit system --quick --quiet --logfile \$OUTPUT_DIR/lynis.log"
@@ -84,45 +85,108 @@ declare -A TOOLS=(
   [RKHunter]="bin/rkhunter --check --skip-keypress > \$OUTPUT_DIR/rkhunter.log"
   [Debsecan]="bin/debsecan > \$OUTPUT_DIR/debsecan.log"
   [Osquery]="bin/osqueryi --json 'SELECT name,path,pid,uid FROM processes LIMIT 10;' > \$OUTPUT_DIR/osquery.json"
-  [AIDE]="bin/aide --check > \$OUTPUT_DIR/aide.log"
+  [AIDE]="bin/aide --check --config tools/aide.conf > \$OUTPUT_DIR/aide.log"
   [LinPEAS]="tools/linpeas.sh -a > \$OUTPUT_DIR/linpeas.log"
   [Tiger]="bin/tiger -H > \$OUTPUT_DIR/tiger.log"
   [OpenSCAP]="oscap xccdf eval --report \$OUTPUT_DIR/openscap.html --profile xccdf_org.ssgproject.content_profile_standard --results-arf \$OUTPUT_DIR/arf.xml tools/ssg-ubuntu2204-ds.xml"
-  [Clair]="tools/clair-scanner some_image > \$OUTPUT_DIR/clair.log 2>&1"
   [Trivy]="bin/trivy fs / --format json > \$OUTPUT_DIR/trivy.json"
-  [Lynx]="bin/lynx -dump https://example.com > \$OUTPUT_DIR/lynx.txt"
   [Auditd]="bin/ausearch -x /usr/bin/sudo > \$OUTPUT_DIR/auditd.log"
   [Bastille]="bin/bastille -c > \$OUTPUT_DIR/bastille.log"
 )
 
-echo "<html><head><title>Informe de Seguridad</title><style>
-body { font-family: Arial; background-color: #f4f4f4; padding: 20px; }
-h2 { background-color: #003366; color: white; padding: 10px; }
-pre { background-color: #ffffff; padding: 10px; border-left: 5px solid #003366; overflow-x: auto; }
-</style></head><body><h1>Informe de Seguridad</h1>" > "$HTML_REPORT"
-
 for tool in "${!TOOLS[@]}"; do
-  echo -e "[*] Ejecutando ${GREEN}$tool${NC}..."
-  eval "${TOOLS[$tool]}" || echo -e "${RED}[!] Error al ejecutar $tool${NC}"
-  
-  FILE=$(echo "${TOOLS[$tool]}" | grep -oE '> \$OUTPUT_DIR/[^ ]+' | awk -F '/' '{print $NF}')
-  FILE_PATH="$OUTPUT_DIR/${FILE}"
-
-  if [[ -f "$FILE_PATH" ]]; then
-    echo "<h2>$tool</h2><pre>" >> "$HTML_REPORT"
-    head -n 100 "$FILE_PATH" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> "$HTML_REPORT"
-    echo "</pre>" >> "$HTML_REPORT"
-  fi
+  echo -e "\n\e[1;36m[*] Ejecutando $tool...\e[0m"
+  eval "${TOOLS[$tool]}"
 done
 
-echo "<p><strong>Informe generado el:</strong> $(date)</p></body></html>" >> "$HTML_REPORT"
-
-echo -e "\n${GREEN}[✔] Auditoría completa. Resultados guardados en '$OUTPUT_DIR'.${NC}"
-echo -e "${GREEN}[✔] Reporte HTML generado: '$HTML_REPORT'${NC}"
+echo -e "\n\e[1;32m[✔] Auditoría completa. Resultados en \$OUTPUT_DIR\e[0m"
 EOF
+
 chmod +x "$OFFLINE_DIR/run_all.sh"
 
-echo "[*] Empaquetando para transferencia..."
-tar -czf offline_security_tools.tar.gz "$OFFLINE_DIR"
+# Crear HTML bonito (opcional, puedes integrarlo luego)
+cat > "$OFFLINE_DIR/generate_report.sh" << 'EOF'
+#!/bin/bash
 
-echo "[✔] Paquete offline preparado: offline_security_tools.tar.gz"
+OUTPUT_DIR="./output"
+REPORT="$OUTPUT_DIR/report.html"
+
+echo "[*] Generando informe HTML completo..."
+
+# Cabecera HTML con estilo
+cat << 'EOF' > "$REPORT"
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Informe de Auditoría de Seguridad</title>
+  <style>
+    body { font-family: sans-serif; background: #f9f9f9; color: #333; padding: 20px; }
+    h1 { color: #005b96; }
+    h2 { color: #003f5c; }
+    pre { background: #f0f0f0; padding: 10px; border-left: 4px solid #005b96; overflow-x: auto; }
+    .section { margin-bottom: 30px; }
+    summary { font-weight: bold; cursor: pointer; color: #003f5c; }
+    .index a { text-decoration: none; color: #0077cc; }
+    .index li { margin-bottom: 5px; }
+    .footer { margin-top: 40px; font-size: 0.9em; color: #777; }
+  </style>
+</head>
+<body>
+  <h1>🛡️ Informe de Auditoría de Seguridad</h1>
+  <p>Este informe resume la salida de todas las herramientas ejecutadas.</p>
+
+  <h2>📋 Índice de herramientas</h2>
+  <ul class="index">
+EOF
+
+# Índice dinámico
+for file in "$OUTPUT_DIR"/*; do
+  [ -f "$file" ] || continue
+  name=$(basename "$file")
+  anchor_id=$(echo "$name" | sed 's/[^a-zA-Z0-9]/_/g')
+  echo "    <li><a href=\"#$anchor_id\">$name</a></li>" >> "$REPORT"
+done
+
+# Inicio del cuerpo
+echo "  </ul><hr>" >> "$REPORT"
+
+# Cuerpo con secciones por archivo
+for file in "$OUTPUT_DIR"/*; do
+  [ -f "$file" ] || continue
+  name=$(basename "$file")
+  anchor_id=$(echo "$name" | sed 's/[^a-zA-Z0-9]/_/g')
+
+  echo "<div class=\"section\" id=\"$anchor_id\">" >> "$REPORT"
+  echo "<details open><summary>📄 $name</summary><br>" >> "$REPORT"
+
+  # Detecta si es HTML y lo embebe
+  if [[ "$file" == *.html ]]; then
+    echo "<iframe src=\"$name\" width=\"100%\" height=\"600px\" style=\"border:1px solid #ccc;\"></iframe>" >> "$REPORT"
+  else
+    echo "<pre>" >> "$REPORT"
+    cat "$file" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> "$REPORT"
+    echo "</pre>" >> "$REPORT"
+  fi
+
+  echo "</details></div>" >> "$REPORT"
+done
+
+# Pie de página
+cat << 'EOF' >> "$REPORT"
+  <div class="footer">
+    Generado automáticamente el <strong>$(date)</strong>.
+  </div>
+</body>
+</html>
+EOF
+
+echo "[✔] Informe generado en $REPORT"
+
+chmod +x "$OFFLINE_DIR/generate_report.sh"
+
+# Crear el paquete final
+echo "[*] Empaquetando todo..."
+tar -czvf offline_security_tools.tar.gz "$OFFLINE_DIR"
+
+echo -e "\n\e[1;32m[✔] Paquete creado: offline_security_tools.tar.gz\e[0m"
