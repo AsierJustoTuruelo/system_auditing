@@ -1,154 +1,128 @@
 #!/bin/bash
 
 set -e
+OFFLINE_DIR="offline_security_tools"
+BIN_DIR="$OFFLINE_DIR/bin"
+TOOLS_DIR="$OFFLINE_DIR/tools"
+PKG_DIR="$OFFLINE_DIR/packages"
 
-BASE_DIR="$(pwd)"
-BIN_DIR="$BASE_DIR/bin"
-OUTPUT_DIR="$BASE_DIR/output"
-PACKAGE_NAME="offline_security_tools"
-TAR_FILE="$PACKAGE_NAME.tar.gz"
+echo "[*] Creando estructura de directorios..."
+mkdir -p "$BIN_DIR" "$TOOLS_DIR" "$PKG_DIR"
 
-mkdir -p "$BIN_DIR" "$OUTPUT_DIR"
-
-echo "[*] Descargando herramientas..."
-
-# Tiger (requiere instalación desde .deb)
-echo " - Descargando tiger..."
-apt download tiger -y >/dev/null 2>&1 || echo "Tiger no pudo descargarse, revisa repositorios habilitados."
-mv tiger_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ Tiger .deb no encontrado tras descarga."
-
-# RKHunter
-echo " - Descargando rkhunter..."
-apt download rkhunter -y >/dev/null 2>&1 || echo "RKHunter no pudo descargarse."
-mv rkhunter_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ RKHunter .deb no encontrado tras descarga."
-
-# AIDE
-echo " - Descargando AIDE..."
-apt download aide aide-common -y >/dev/null 2>&1 || echo "AIDE no pudo descargarse."
-mv aide*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ AIDE .deb no encontrado tras descarga."
-
-# Nmap
-echo " - Descargando nmap..."
-apt download nmap -y >/dev/null 2>&1 || echo "Nmap no pudo descargarse."
-mv nmap_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ Nmap .deb no encontrado tras descarga."
-
-# Lynx
-echo " - Descargando lynx..."
-apt download lynx -y >/dev/null 2>&1 || echo "Lynx no pudo descargarse."
-mv lynx_*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ Lynx .deb no encontrado tras descarga."
-
-# Trivy (directo desde GitHub)
-echo " - Descargando Trivy..."
-TRIVY_URL=$(curl -s https://api.github.com/repos/aquasecurity/trivy/releases/latest | grep browser_download_url | grep 'trivy_.*Linux-64bit.tar.gz' | cut -d '"' -f 4)
-wget -q "$TRIVY_URL" -O trivy.tar.gz
-tar -xzf trivy.tar.gz
-mv trivy "$BIN_DIR/"
-rm -rf trivy.tar.gz LICENSE README.md
+echo "[*] Descargando herramientas portables y scripts..."
 
 # Lynis
-echo " - Descargando Lynis..."
-wget -q https://downloads.cisofy.com/lynis/lynis-3.0.9.tar.gz -O lynis.tar.gz
-tar -xzf lynis.tar.gz
-mv lynis "$BIN_DIR/"
-rm lynis.tar.gz
+git clone https://github.com/CISOfy/lynis.git "$TOOLS_DIR/lynis"
 
-# OpenSCAP
-echo " - Descargando oscap scanner..."
-apt download libopenscap8 -y >/dev/null 2>&1 || echo "OpenSCAP no pudo descargarse."
-mv libopenscap*.deb "$BIN_DIR" 2>/dev/null || echo "⚠️ OpenSCAP .deb no encontrado tras descarga."
+# LinPEAS
+curl -L -o "$TOOLS_DIR/linpeas.sh" https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh
+chmod +x "$TOOLS_DIR/linpeas.sh"
 
-# Scripts personalizados
-echo " - Copiando scripts de ejecución..."
-cat > "$BASE_DIR/run_all.sh" << 'EOF'
+# OpenSCAP Profile (ajustar si usas otra distro)
+curl -L -o "$TOOLS_DIR/ssg-ubuntu2204-ds.xml" https://github.com/ComplianceAsCode/content/releases/latest/download/ssg-ubuntu2204-ds.xml
+
+# Clair Scanner (versión estática)
+curl -L -o "$TOOLS_DIR/clair-scanner" https://github.com/arminc/clair-scanner/releases/latest/download/clair-scanner_linux_amd64
+chmod +x "$TOOLS_DIR/clair-scanner"
+
+echo "[*] Descargando paquetes .deb y dependencias..."
+
+PACKAGES=(
+  chkrootkit
+  rkhunter
+  debsecan
+  osquery
+  aide
+  tiger
+  lynx
+  auditd
+  bastille
+  trivy
+)
+
+for pkg in "${PACKAGES[@]}"; do
+  echo "[+] Descargando $pkg..."
+  apt download "$pkg" -o=dir::cache="$PKG_DIR" 2>/dev/null || echo "   [!] Falló $pkg (puede que no esté disponible)"
+done
+
+echo "[*] Copiando ejecutables del sistema si están instalados..."
+
+for cmd in osqueryi trivy aide debsecan rkhunter chkrootkit tiger lynx bastille ausearch; do
+  if command -v "$cmd" &> /dev/null; then
+    cp "$(command -v $cmd)" "$BIN_DIR/" || echo "   [!] No se pudo copiar $cmd"
+  fi
+done
+
+echo "[*] Guardando scripts de instalación y ejecución..."
+
+# install.sh
+cat > "$OFFLINE_DIR/install.sh" << 'EOF'
 #!/bin/bash
 set -e
-OUTPUT_DIR="./output"
-mkdir -p "$OUTPUT_DIR"
-
-echo "[*] Ejecutando Tiger..."
-dpkg -x bin/tiger_*.deb ./tmp && ./tmp/usr/sbin/tiger > "$OUTPUT_DIR/tiger.log" 2>&1 || echo "⚠️ Tiger falló."
-
-echo "[*] Ejecutando RKHunter..."
-dpkg -x bin/rkhunter_*.deb ./tmp && ./tmp/usr/bin/rkhunter --check --sk --nocolors > "$OUTPUT_DIR/rkhunter.log" 2>&1 || echo "⚠️ RKHunter falló."
-
-echo "[*] Ejecutando AIDE..."
-dpkg -x bin/aide_*.deb ./tmp
-dpkg -x bin/aide-common_*.deb ./tmp
-./tmp/usr/bin/aide --init > "$OUTPUT_DIR/aide.log" 2>&1 || echo "⚠️ AIDE falló."
-
-echo "[*] Ejecutando Lynis..."
-./bin/lynis/lynis audit system > "$OUTPUT_DIR/lynis.txt" 2>&1 || echo "⚠️ Lynis falló."
-
-echo "[*] Ejecutando Nmap..."
-./bin/nmap -sV -oN "$OUTPUT_DIR/nmap.log" 127.0.0.1 || echo "⚠️ Nmap falló."
-
-echo "[*] Ejecutando Lynx..."
-./bin/lynx -dump https://example.com > "$OUTPUT_DIR/lynx.txt" || echo "⚠️ Lynx falló."
-
-echo "[*] Ejecutando Trivy..."
-./bin/trivy fs --quiet --severity HIGH,CRITICAL --output "$OUTPUT_DIR/trivy.txt" ./ || echo "⚠️ Trivy falló."
-
-echo "[*] Ejecutando OpenSCAP..."
-dpkg -x bin/libopenscap*.deb ./tmp
-./tmp/usr/bin/oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_standard --results "$OUTPUT_DIR/openscap-results.xml" /usr/share/openscap/scap-yast2sec-xccdf.xml || echo "⚠️ OpenSCAP falló."
-
-echo "[✔] Todas las herramientas ejecutadas."
+echo "[*] Instalando paquetes locales..."
+sudo dpkg -i packages/*.deb 2>/dev/null || true
+echo "[*] Instalación completa. Ejecuta ./run_all.sh para iniciar la auditoría."
 EOF
+chmod +x "$OFFLINE_DIR/install.sh"
 
-chmod +x "$BASE_DIR/run_all.sh"
-
-# Report generator
-cat > "$BASE_DIR/generate_report.sh" << 'EOF'
+# run_all.sh
+cat > "$OFFLINE_DIR/run_all.sh" << 'EOF'
 #!/bin/bash
+
+set -e
 OUTPUT_DIR="./output"
-REPORT="$OUTPUT_DIR/report.html"
+HTML_REPORT="$OUTPUT_DIR/report.html"
 mkdir -p "$OUTPUT_DIR"
 
-echo "[*] Generando informe HTML completo..."
+GREEN="\033[0;32m"
+RED="\033[0;31m"
+NC="\033[0m"
 
-cat << 'HTML' > "$REPORT"
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>Informe de Auditoría</title>
-  <style>
-    body { font-family: Arial; padding: 20px; background: #f0f0f0; }
-    h1 { color: #005b96; }
-    summary { font-weight: bold; cursor: pointer; margin-top: 10px; }
-    pre { background: #fff; padding: 10px; border: 1px solid #ccc; overflow-x: auto; }
-  </style>
-</head>
-<body>
-  <h1>🛡 Informe de Auditoría de Seguridad</h1>
-  <ul>
-HTML
+declare -A TOOLS=(
+  [Lynis]="tools/lynis/lynis audit system --quick --quiet --logfile \$OUTPUT_DIR/lynis.log"
+  [Chkrootkit]="bin/chkrootkit > \$OUTPUT_DIR/chkrootkit.log"
+  [RKHunter]="bin/rkhunter --check --skip-keypress > \$OUTPUT_DIR/rkhunter.log"
+  [Debsecan]="bin/debsecan > \$OUTPUT_DIR/debsecan.log"
+  [Osquery]="bin/osqueryi --json 'SELECT name,path,pid,uid FROM processes LIMIT 10;' > \$OUTPUT_DIR/osquery.json"
+  [AIDE]="bin/aide --check > \$OUTPUT_DIR/aide.log"
+  [LinPEAS]="tools/linpeas.sh -a > \$OUTPUT_DIR/linpeas.log"
+  [Tiger]="bin/tiger -H > \$OUTPUT_DIR/tiger.log"
+  [OpenSCAP]="oscap xccdf eval --report \$OUTPUT_DIR/openscap.html --profile xccdf_org.ssgproject.content_profile_standard --results-arf \$OUTPUT_DIR/arf.xml tools/ssg-ubuntu2204-ds.xml"
+  [Clair]="tools/clair-scanner some_image > \$OUTPUT_DIR/clair.log 2>&1"
+  [Trivy]="bin/trivy fs / --format json > \$OUTPUT_DIR/trivy.json"
+  [Lynx]="bin/lynx -dump https://example.com > \$OUTPUT_DIR/lynx.txt"
+  [Auditd]="bin/ausearch -x /usr/bin/sudo > \$OUTPUT_DIR/auditd.log"
+  [Bastille]="bin/bastille -c > \$OUTPUT_DIR/bastille.log"
+)
 
-for file in "$OUTPUT_DIR"/*; do
-  name=$(basename "$file")
-  id=$(echo "$name" | tr -c '[:alnum:]' '_')
-  echo "<li><a href=\"#$id\">$name</a></li>" >> "$REPORT"
+echo "<html><head><title>Informe de Seguridad</title><style>
+body { font-family: Arial; background-color: #f4f4f4; padding: 20px; }
+h2 { background-color: #003366; color: white; padding: 10px; }
+pre { background-color: #ffffff; padding: 10px; border-left: 5px solid #003366; overflow-x: auto; }
+</style></head><body><h1>Informe de Seguridad</h1>" > "$HTML_REPORT"
+
+for tool in "${!TOOLS[@]}"; do
+  echo -e "[*] Ejecutando ${GREEN}$tool${NC}..."
+  eval "${TOOLS[$tool]}" || echo -e "${RED}[!] Error al ejecutar $tool${NC}"
+  
+  FILE=$(echo "${TOOLS[$tool]}" | grep -oE '> \$OUTPUT_DIR/[^ ]+' | awk -F '/' '{print $NF}')
+  FILE_PATH="$OUTPUT_DIR/${FILE}"
+
+  if [[ -f "$FILE_PATH" ]]; then
+    echo "<h2>$tool</h2><pre>" >> "$HTML_REPORT"
+    head -n 100 "$FILE_PATH" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> "$HTML_REPORT"
+    echo "</pre>" >> "$HTML_REPORT"
+  fi
 done
 
-echo "</ul><hr>" >> "$REPORT"
+echo "<p><strong>Informe generado el:</strong> $(date)</p></body></html>" >> "$HTML_REPORT"
 
-for file in "$OUTPUT_DIR"/*; do
-  name=$(basename "$file")
-  id=$(echo "$name" | tr -c '[:alnum:]' '_')
-  echo "<details id=\"$id\"><summary>$name</summary><pre>" >> "$REPORT"
-  cat "$file" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' >> "$REPORT"
-  echo "</pre></details>" >> "$REPORT"
-done
-
-echo "</body></html>" >> "$REPORT"
-
-echo "[✔] Informe generado: $REPORT"
+echo -e "\n${GREEN}[✔] Auditoría completa. Resultados guardados en '$OUTPUT_DIR'.${NC}"
+echo -e "${GREEN}[✔] Reporte HTML generado: '$HTML_REPORT'${NC}"
 EOF
+chmod +x "$OFFLINE_DIR/run_all.sh"
 
-chmod +x "$BASE_DIR/generate_report.sh"
+echo "[*] Empaquetando para transferencia..."
+tar -czf offline_security_tools.tar.gz "$OFFLINE_DIR"
 
-# Crear archivo tar final
-echo "[*] Empaquetando..."
-tar -czf "$TAR_FILE" bin run_all.sh generate_report.sh output/
-
-echo "[✔] Paquete creado: $TAR_FILE"
+echo "[✔] Paquete offline preparado: offline_security_tools.tar.gz"
