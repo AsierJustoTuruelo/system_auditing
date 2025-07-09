@@ -31,7 +31,6 @@ PACKAGES=(
   chkrootkit
   rkhunter
   debsecan
-  osquery
   aide
   tiger
   lynx
@@ -83,14 +82,11 @@ declare -A TOOLS=(
   [Chkrootkit]="bin/chkrootkit > \$OUTPUT_DIR/chkrootkit.log"
   [RKHunter]="bin/rkhunter --check --skip-keypress > \$OUTPUT_DIR/rkhunter.log"
   [Debsecan]="bin/debsecan > \$OUTPUT_DIR/debsecan.log"
-  [Osquery]="bin/osqueryi --json 'SELECT name,path,pid,uid FROM processes LIMIT 10;' > \$OUTPUT_DIR/osquery.json"
   [AIDE]="bin/aide --check > \$OUTPUT_DIR/aide.log"
   [LinPEAS]="tools/linpeas.sh -a > \$OUTPUT_DIR/linpeas.log"
   [Tiger]="bin/tiger -H > \$OUTPUT_DIR/tiger.log"
   [OpenSCAP]="oscap xccdf eval --report \$OUTPUT_DIR/openscap.html --profile xccdf_org.ssgproject.content_profile_standard --results-arf \$OUTPUT_DIR/arf.xml tools/ssg-ubuntu2204-ds.xml"
-  [Clair]="tools/clair-scanner some_image > \$OUTPUT_DIR/clair.log 2>&1"
   [Trivy]="bin/trivy fs / --format json > \$OUTPUT_DIR/trivy.json"
-  [Lynx]="bin/lynx -dump https://example.com > \$OUTPUT_DIR/lynx.txt"
   [Auditd]="bin/ausearch -x /usr/bin/sudo > \$OUTPUT_DIR/auditd.log"
   [Bastille]="bin/bastille -c > \$OUTPUT_DIR/bastille.log"
 )
