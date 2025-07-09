@@ -88,7 +88,6 @@ declare -A TOOLS=(
   [OpenSCAP]="oscap xccdf eval --report \$OUTPUT_DIR/openscap.html --profile xccdf_org.ssgproject.content_profile_standard --results-arf \$OUTPUT_DIR/arf.xml tools/ssg-ubuntu2204-ds.xml"
   [Trivy]="bin/trivy fs / --format json > \$OUTPUT_DIR/trivy.json"
   [Auditd]="bin/ausearch -x /usr/bin/sudo > \$OUTPUT_DIR/auditd.log"
-  [Bastille]="bin/bastille -c > \$OUTPUT_DIR/bastille.log"
 )
 
 echo "<html><head><title>Informe de Seguridad</title><style>
